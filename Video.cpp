@@ -202,8 +202,7 @@ void MedianBackground::UpdateBackground( Mat current_frame )
 }
 
 void medianBackgroundDemo(VideoCapture& video, int starting_frame, Rect groundTruth, bool showGT) {
-	Mat previous_grey_frame, optical_flow, optical_flow_display;
-	Mat current_frame, thresholded_image, closed_image, first_frame;
+	Mat current_frame, first_frame;
 	double learning_rate = 0.01;
 
 	video.set(CV_CAP_PROP_POS_FRAMES, starting_frame);
@@ -211,7 +210,6 @@ void medianBackgroundDemo(VideoCapture& video, int starting_frame, Rect groundTr
 
 	first_frame = current_frame.clone();
 
-	std::cout << "Here" << std::endl;
 	MedianBackground median_background(current_frame, (float) 1.002, 1);
 	MedianBackground median_background_2(current_frame, (float) 1.001, 1);
 
@@ -224,6 +222,10 @@ void medianBackgroundDemo(VideoCapture& video, int starting_frame, Rect groundTr
 	Timestamper* timer = new Timestamper();
 	int frame_count = 0;
 
+	bool isFirstOpening = false, isSecondOpening = false;
+	int frameFirstOpening, frameSecondOpening;
+	int totalChange = 0, avgChange = 0;
+
 	//train
 	for (int i = 0; i < 100; i++) {
 		median_background.UpdateBackground(current_frame);
@@ -233,17 +235,6 @@ void medianBackgroundDemo(VideoCapture& video, int starting_frame, Rect groundTr
 	while ((!current_frame.empty()) && (frame_rate++ < video.get(CV_CAP_PROP_FRAME_COUNT))) {
 		// fast median
 		double duration = static_cast<double>(getTickCount());
-		timer->ignoreTimeSinceLastRecorded();
-		median_background.UpdateBackground(current_frame);
-		timer->recordTime("median1");
-		median_bg_img = median_background.GetBackgroundImage();
-
-		Mat median_difference;
-		absdiff(median_bg_img, current_frame, median_difference);
-		cvtColor(median_difference, median_difference, CV_BGR2GRAY);
-		threshold(median_difference, median_difference, 30, 255, THRESH_BINARY);
-		median_fg_img.setTo(Scalar(0, 0, 0));
-		current_frame.copyTo(median_fg_img, median_difference);
 
 		// slow median
 		timer->ignoreTimeSinceLastRecorded();
@@ -258,13 +249,6 @@ void medianBackgroundDemo(VideoCapture& video, int starting_frame, Rect groundTr
 		median_fg_img_2.setTo(Scalar(0, 0, 0));
 		current_frame.copyTo(median_fg_img_2, median_difference_2);
 
-		// median differences
-		Mat median_bg_difference;
-		absdiff(median_bg_img, median_bg_img_2, median_bg_difference);
-		cvtColor(median_bg_difference, median_bg_difference, CV_BGR2GRAY);
-		median_bg_difference.setTo(Scalar(0, 0, 0));
-		current_frame.copyTo(median_fg_difference, median_bg_difference);
-
 		// inter-frame times
 		duration = static_cast<double>(getTickCount()) - duration;
 		duration /= getTickFrequency() / 1000.0;
@@ -278,17 +262,21 @@ void medianBackgroundDemo(VideoCapture& video, int starting_frame, Rect groundTr
 		if(showGT)
 			cv::rectangle(current_frame, groundTruth, Scalar(0, 0, 255));
 
-		Mat temp_median_output = JoinImagesHorizontally(current_frame, frame_str, median_bg_img, "Median Background 1", 4);
-		Mat median_output = JoinImagesHorizontally(temp_median_output, "", median_fg_img, "Foreground 1", 4);
-		imshow("Median Background Model 1", median_output);
-
 		Mat temp_median_output_2 = JoinImagesHorizontally(current_frame, frame_str, median_bg_img_2, "Median Background 2", 4);
 		Mat median_output_2 = JoinImagesHorizontally(temp_median_output_2, "", median_fg_img_2, "Foreground 2", 4);
 		imshow("Median Background Model 2", median_output_2);
 
-		imshow("Difference between backgrounds", median_fg_difference);
+		threshold(median_difference_2, median_difference_2, 20, 255, THRESH_BINARY);
+		imshow("Thresholded", median_difference_2);
+
+		totalChange += countNonZero(median_difference_2);
+		avgChange = totalChange / (frame_count / 10);
+
+		cout << totalChange << endl;
+		cout << avgChange << endl;
+
 		video >> current_frame;
-		frame_count++;
+		frame_count += 10;
 	}
 
 	cvDestroyAllWindows();

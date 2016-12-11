@@ -37,7 +37,7 @@ void RecognitionDemos( Mat& full_image, Mat& template1, Mat& template2, Mat& tem
 void MeanShiftDemo( VideoCapture& video, Rect& starting_position, int starting_frame, int end_frame);
 int CameraCalibration( string passed_settings_filename );
 void TrackFeaturesDemo( VideoCapture& video, int starting_frame_number, int ending_frame_number );
-void medianBackgroundDemo(VideoCapture& video, int starting_frame, Rect groundTruth, bool showGT = false);
+void medianBackgroundDemo(VideoCapture& video, int starting_frame, Rect groundTruth = Rect(), bool showGT = false);
 
 class TimestampEvent {
 private:
