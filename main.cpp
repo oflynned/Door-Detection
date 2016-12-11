@@ -26,19 +26,23 @@ static const char* videos[] = {
 // (221,264), (573,265), (221,1035), (559,1040); 153-251; 380-492
 // (221,264), (573,265), (221,1035), (559,1040); 134-230; 311-432
 
-Rect door_1(Point(77, 65), Point(205, 359));
-Rect door_2(Point(77, 65), Point(205, 359));
-Rect door_3(Point(221, 264), Point(559, 1040));
-Rect door_4(Point(221, 264), Point(559, 1040));
+const Rect door_1(Point(77, 65), Point(205, 359));
+const Rect door_2(Point(77, 65), Point(205, 359));
+const Rect door_3(Point(221, 264), Point(559, 1040));
+const Rect door_4(Point(221, 264), Point(559, 1040));
 
-bool firstOpening = false, secondOpening = false;
-int firstOpenFrame, firstCloseFrame;
-int secondOpenFrame, secondCloseFrame;
+int f_open = -1, f_close = -1, s_open = -1, s_close = -1;
+bool firstEvent = false, secondEvent = false;
 
 void saveImage(VideoCapture video, int videoNum, int frameCount) {
 	Mat frame;
 	video.set(CV_CAP_PROP_POS_FRAMES, frameCount);
 	video >> frame;
+	imwrite((const char*)("Images/v" + std::to_string(videoNum) +
+		"f" + std::to_string(frameCount) + ".png").c_str(), frame);
+}
+
+void saveImage(Mat frame, int videoNum, int frameCount) {
 	imwrite((const char*)("Images/v" + std::to_string(videoNum) +
 		"f" + std::to_string(frameCount) + ".png").c_str(), frame);
 }
@@ -56,7 +60,7 @@ double calcAngle(Vec4i line) {
 	double d = abs(sqrt(x + y));
 	double radians = atan2(y, x);
 
-	// return vlaue in degrees
+	// return value in degrees
 	return radians * 180 / CV_PI;
 }
 
@@ -100,29 +104,24 @@ void equaliseLighting(Mat image, bool showOutput = false) {
 void detectDoor(VideoCapture& video, int element) {
 	Mat src, output;
 
+	int total_frames = video.get(CAP_PROP_FRAME_COUNT);
 	int frame_count = 0;
-	while (waitKey(30)) {
+	while (waitKey(30) && frame_count != total_frames) {
 		video.set(CV_CAP_PROP_POS_FRAMES, frame_count);
 		video >> src;
 		
+		// resize larger videos to half-size
 		if(element == 2 || element == 3)
 			resize(src, src, Size(), 0.5, 0.5);
-
-		// alternative adaptive threshold + Gaussian
-		Mat input;
-		src.copyTo(input);
-		//cvtColor(input, input, CV_BGR2GRAY);
-		//adaptiveThreshold(input, input, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, 15, 5);
-		//GaussianBlur(input, input, Size(5, 5), 5);
 
 		// generate lines
 		vector<Vec4i> lines, horizontalLines, verticalLines, skewedLines;
 
 		// Canny for getting outlines
 		Mat grey;
-		input.copyTo(grey);
+		src.copyTo(grey);
 		cvtColor(grey, grey, CV_BGR2GRAY);
-		Canny(grey, grey, 0, 255);
+		Canny(grey, grey, 50, 255);
 		imshow("Canny", grey);
 
 		// detect hough lines probabilistically
@@ -159,6 +158,29 @@ void detectDoor(VideoCapture& video, int element) {
 			Point point1(line[0], line[1]);
 			Point point2(line[2], line[3]);
 			cv::line(edges, point1, point2, Scalar(255, 255, 0), 2);
+
+			const int DELAY = 50;
+
+			if (skewedLines.size() > 0) {
+				if (f_open == -1 && frame_count > DELAY) {
+					f_open = frame_count;
+				}
+				else if (f_close == -1 && frame_count - (f_open + DELAY) > 0) {
+					f_close = frame_count;
+				}
+				else if (s_open == -1 && frame_count - (f_close + DELAY) > 0) {
+					s_open = frame_count;
+				}
+				else if (s_close == -1 && frame_count - (s_open + DELAY) > 0) {
+					s_close = frame_count;
+				}
+
+
+				cout << "First Open " << f_open << endl;
+				cout << "First Close " << f_close << endl;
+				cout << "Second Open " << s_open << endl;
+				cout << "Second Close " << s_close << endl;
+			}
 		}
 
 		vector<Point> doorPoints;
@@ -194,15 +216,23 @@ void detectDoor(VideoCapture& video, int element) {
 			cv::circle(edges, doorPoints[c], 5, Scalar(0, 255, 0), 2);
 		}
 
-		cout << horizontalLines.size() << " horizontal lines" << endl;
+		/*cout << horizontalLines.size() << " horizontal lines" << endl;
 		cout << verticalLines.size() << " vertical lines" << endl;
-		cout << doorPoints.size() << " door points" << endl << endl;
+		cout << skewedLines.size() << " skewed lines" << endl;
+		cout << doorPoints.size() << " door points" << endl << endl;*/
+
+		// print frame count to mat
+		string frame_text("Frame " + to_string(frame_count));
+		putText(edges, frame_text, cvPoint(30, 30),
+			FONT_HERSHEY_COMPLEX_SMALL, 0.5, cvScalar(0, 0, 255), 1, CV_AA);
 
 		imshow("Edges", edges);
 
-		if (frame_count == video.get(CV_CAP_PROP_FRAME_COUNT) - 1)
+		/*if (frame_count == video.get(CV_CAP_PROP_FRAME_COUNT) - 1)
 			frame_count = 0;
-		else frame_count += 1;
+		else frame_count += 1;*/
+
+		frame_count++;
 	}
 }
 
@@ -212,6 +242,14 @@ void findDoor(int element) {
 	VideoCapture video(filename);
 	detectDoor(video, element);
 	video.release();
+
+	cout << "First Open " << f_open << endl;
+	cout << "First Close " << f_close << endl;
+	cout << "Second Open " << s_open << endl;
+	cout << "Second Close " << s_close << endl;
+
+	// infinite loop broken on ESC
+	while (cv::waitKey(1) != 27) {}
 }
 
 int main(int argc, const char** argv) {
