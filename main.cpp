@@ -68,6 +68,10 @@ bool isVertical(float angle) {
 	return (angle > 85 && angle < 95) || (angle > -95 && angle < -85);
 }
 
+bool isSkewed(float angle) {
+	return (angle > -45 && angle < 0);
+}
+
 // check if two points are within 25 pixels
 bool tolerance(Point p1, Point p2) {
 	double x_dist = pow(p1.x - p2.x, 2);
@@ -79,25 +83,30 @@ Point interpolate(Point p1, Point p2) {
 	return Point((p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
 }
 
-void detectDoor(VideoCapture& video) {
+void equaliseLighting(Mat image, bool showOutput = false) {
+	// equalise the colours during light changes
+	cvtColor(image, image, CV_BGR2YCrCb);
+
+	vector<Mat> channels;
+	split(image, channels);
+	equalizeHist(channels[0], channels[0]);
+	merge(channels, image);
+	cvtColor(image, image, CV_YCrCb2BGR);
+
+	if(showOutput)
+		imshow("Equalised", image);
+}
+
+void detectDoor(VideoCapture& video, int element) {
 	Mat src, output;
 
 	int frame_count = 0;
 	while (waitKey(30)) {
 		video.set(CV_CAP_PROP_POS_FRAMES, frame_count);
 		video >> src;
-
-		// equalise the colours during light changes
-		Mat equalised;
-		src.copyTo(equalised);
-		cvtColor(equalised, equalised, CV_BGR2YCrCb);
-
-		vector<Mat> channels;
-		split(equalised, channels);
-		equalizeHist(channels[0], channels[0]);
-		merge(channels, equalised);
-		cvtColor(equalised, equalised, CV_YCrCb2BGR);
-		imshow("Equalised", equalised);
+		
+		if(element == 2 || element == 3)
+			resize(src, src, Size(), 0.5, 0.5);
 
 		// alternative adaptive threshold + Gaussian
 		Mat input;
@@ -107,13 +116,17 @@ void detectDoor(VideoCapture& video) {
 		//GaussianBlur(input, input, Size(5, 5), 5);
 
 		// generate lines
-		vector<Vec4i> lines, horizontalLines, verticalLines;
+		vector<Vec4i> lines, horizontalLines, verticalLines, skewedLines;
 
+		// Canny for getting outlines
 		Mat grey;
 		input.copyTo(grey);
 		cvtColor(grey, grey, CV_BGR2GRAY);
 		Canny(grey, grey, 0, 255);
-		HoughLinesP(grey, lines, 1, CV_PI / 180, 50, 50, 10);
+		imshow("Canny", grey);
+
+		// detect hough lines probabilistically
+		HoughLinesP(grey, lines, 1, CV_PI / 180, 50, 100, 10);
 
 		for (int i = 0; i < lines.size(); i++) {
 			Vec4i l = lines[i];
@@ -124,6 +137,8 @@ void detectDoor(VideoCapture& video) {
 				horizontalLines.push_back(l);
 			else if (isVertical(angle))
 				verticalLines.push_back(l);
+			else if (isSkewed(angle))
+				skewedLines.push_back(l);
 		}
 
 		Mat edges;
@@ -138,6 +153,12 @@ void detectDoor(VideoCapture& video) {
 			Point point1(line[0], line[1]);
 			Point point2(line[2], line[3]);
 			cv::line(edges, point1, point2, Scalar(255, 0, 0), 2);
+		}
+
+		for (Vec4i line : skewedLines) {
+			Point point1(line[0], line[1]);
+			Point point2(line[2], line[3]);
+			cv::line(edges, point1, point2, Scalar(255, 255, 0), 2);
 		}
 
 		vector<Point> doorPoints;
@@ -179,8 +200,9 @@ void detectDoor(VideoCapture& video) {
 
 		imshow("Edges", edges);
 
-		if (frame_count == video.get(CAP_POS)
-		frame_count += 1;
+		if (frame_count == video.get(CV_CAP_PROP_FRAME_COUNT) - 1)
+			frame_count = 0;
+		else frame_count += 1;
 	}
 }
 
@@ -188,11 +210,11 @@ void findDoor(int element) {
 	std::string filename(videos[element]);
 
 	VideoCapture video(filename);
-	detectDoor(video);
+	detectDoor(video, element);
 	video.release();
 }
 
 int main(int argc, const char** argv) {
-	findDoor(0);
+	findDoor(1);
 	return 0;
 }
