@@ -26,10 +26,14 @@ static const char* videos[] = {
 // (221,264), (573,265), (221,1035), (559,1040); 153-251; 380-492
 // (221,264), (573,265), (221,1035), (559,1040); 134-230; 311-432
 
-const Rect door_1(Point(77, 65), Point(205, 359));
-const Rect door_2(Point(77, 65), Point(205, 359));
-const Rect door_3(Point(221, 264), Point(559, 1040));
-const Rect door_4(Point(221, 264), Point(559, 1040));
+const Point door_1_tl(77, 65);
+const Point door_1_br(205, 359);
+const Point door_2_tl(77, 65);
+const Point door_2_br(205, 359);
+const Point door_3_tl(221, 264);
+const Point door_3_br(559, 1040);
+const Point door_4_tl(221, 264);
+const Point door_4_br(559, 1040);
 
 int f_open = -1, f_close = -1, s_open = -1, s_close = -1;
 bool firstEvent = false, secondEvent = false;
@@ -97,7 +101,7 @@ void equaliseLighting(Mat image, bool showOutput = false) {
 	merge(channels, image);
 	cvtColor(image, image, CV_YCrCb2BGR);
 
-	if(showOutput)
+	if (showOutput)
 		imshow("Equalised", image);
 }
 
@@ -109,9 +113,11 @@ void detectDoor(VideoCapture& video, int element) {
 	while (waitKey(30) && frame_count != total_frames) {
 		video.set(CV_CAP_PROP_POS_FRAMES, frame_count);
 		video >> src;
-		
+
+		equaliseLighting(src);
+
 		// resize larger videos to half-size
-		if(element == 2 || element == 3)
+		if (element == 2 || element == 3)
 			resize(src, src, Size(), 0.5, 0.5);
 
 		// generate lines
@@ -163,18 +169,17 @@ void detectDoor(VideoCapture& video, int element) {
 
 			if (skewedLines.size() > 0) {
 				if (f_open == -1 && frame_count > DELAY) {
-					f_open = frame_count;
+					f_open = frame_count - DELAY / 2;
 				}
 				else if (f_close == -1 && frame_count - (f_open + DELAY) > 0) {
-					f_close = frame_count;
+					f_close = frame_count + DELAY / 2;
 				}
 				else if (s_open == -1 && frame_count - (f_close + DELAY) > 0) {
-					s_open = frame_count;
+					s_open = frame_count - DELAY / 2;
 				}
 				else if (s_close == -1 && frame_count - (s_open + DELAY) > 0) {
-					s_close = frame_count;
+					s_close = frame_count + DELAY / 2;
 				}
-
 
 				cout << "First Open " << f_open << endl;
 				cout << "First Close " << f_close << endl;
@@ -196,7 +201,7 @@ void detectDoor(VideoCapture& video, int element) {
 				Point v_p1 = Point(v_line[0], v_line[1]);
 				Point v_p2 = Point(v_line[2], v_line[3]);
 
-				// check if point within 25 pixels of one another
+				// check if points are within tolerance of one another
 				if (tolerance(h_p1, v_p1)) {
 					doorPoints.push_back(interpolate(h_p1, v_p1));
 				}
@@ -216,15 +221,9 @@ void detectDoor(VideoCapture& video, int element) {
 			cv::circle(edges, doorPoints[c], 5, Scalar(0, 255, 0), 2);
 		}
 
-		/*cout << horizontalLines.size() << " horizontal lines" << endl;
-		cout << verticalLines.size() << " vertical lines" << endl;
-		cout << skewedLines.size() << " skewed lines" << endl;
-		cout << doorPoints.size() << " door points" << endl << endl;*/
-
 		// print frame count to mat
 		string frame_text("Frame " + to_string(frame_count));
-		putText(edges, frame_text, cvPoint(30, 30),
-			FONT_HERSHEY_COMPLEX_SMALL, 0.5, cvScalar(0, 0, 255), 1, CV_AA);
+		putText(edges, frame_text, cvPoint(30, 30), FONT_HERSHEY_COMPLEX_SMALL, 0.5, cvScalar(0, 0, 255), 1, CV_AA);
 
 		imshow("Edges", edges);
 
@@ -236,23 +235,91 @@ void detectDoor(VideoCapture& video, int element) {
 	}
 }
 
+void CompareRecognitionResults(Mat& locations_found, Mat& ground_truth) {
+	double precision, recall, accuracy, specificity, dice_coeff;
+
+	CV_Assert(locations_found.type() == CV_8UC1);
+	CV_Assert(ground_truth.type() == CV_8UC1);
+	int false_positives = 0;
+	int false_negatives = 0;
+	int true_positives = 0;
+	int true_negatives = 0;
+	for (int row = 0; row < ground_truth.rows; row++) {
+		for (int col = 0; col < ground_truth.cols; col++) {
+			uchar result = locations_found.at<uchar>(row, col);
+			uchar gt = ground_truth.at<uchar>(row, col);
+			if (gt > 0)
+				if (result > 0)
+					true_positives++;
+				else false_negatives++;
+			else if (result > 0)
+				false_positives++;
+			else true_negatives++;
+		}
+	}
+
+	precision = ((double)true_positives) / ((double)(true_positives + false_positives));
+	recall = ((double)true_positives) / ((double)(true_positives + false_negatives));
+	accuracy = ((double)(true_positives + true_negatives)) / ((double)(true_positives + false_positives + true_negatives + false_negatives));
+	specificity = ((double)true_negatives) / ((double)(false_positives + true_negatives));
+	dice_coeff = 2.0*precision*recall / (precision + recall);
+
+	cout << "Precision: " << precision << endl;
+	cout << "Recall: " << recall << endl;
+	cout << "Accuracy: " << accuracy << endl;
+	cout << "Specificity: " << specificity << endl;
+	cout << "Dice Coeff: " << dice_coeff << endl;
+}
+
+void metrics(VideoCapture video, int element) {
+	video.set(CV_CAP_PROP_POS_FRAMES, 0);
+	
+	Mat src;
+	video >> src;
+
+	Mat groundTruth(src.rows, src.cols, CV_8UC1);
+	Mat roi(src.rows, src.cols, CV_8UC1);
+	groundTruth.setTo(0);
+	roi.setTo(0);
+
+	switch (element) {
+	case 0:
+		cv::rectangle(groundTruth, door_1_tl, door_1_br, Scalar(255, 255, 255), CV_FILLED);
+		cv::rectangle(roi, Point(70, 62), Point(221, 358), Scalar(255, 255, 255), CV_FILLED);
+		break;
+	case 1:
+		cv::rectangle(groundTruth, door_2_tl, door_2_br, Scalar(255, 255, 255), CV_FILLED);
+		cv::rectangle(roi, Point(68, 63), Point(216, 350), Scalar(255, 255, 255), CV_FILLED);
+		break;
+	case 2:
+		cv::rectangle(groundTruth, door_3_tl, door_3_br, Scalar(255, 255, 255), CV_FILLED);
+		cv::rectangle(roi, Point(211, 273), Point(541, 1033), Scalar(255, 255, 255), CV_FILLED);
+		break;
+	case 3:
+		cv::rectangle(groundTruth, door_4_tl, door_4_br, Scalar(255, 255, 255), CV_FILLED);
+		cv::rectangle(roi, Point(208, 276), Point(541, 1035), Scalar(255, 255, 255), CV_FILLED);
+		break;
+	default:
+		break;
+	}
+	CompareRecognitionResults(roi, groundTruth);
+
+	imshow("GT", groundTruth);
+	imshow("ROI", roi);
+}
+
 void findDoor(int element) {
 	std::string filename(videos[element]);
 
 	VideoCapture video(filename);
-	detectDoor(video, element);
+	metrics(video, element);
+	//detectDoor(video, element);
 	video.release();
 
-	cout << "First Open " << f_open << endl;
-	cout << "First Close " << f_close << endl;
-	cout << "Second Open " << s_open << endl;
-	cout << "Second Close " << s_close << endl;
-
-	// infinite loop broken on ESC
-	while (cv::waitKey(1) != 27) {}
+	while (cv::waitKey() != 27) {}
 }
 
 int main(int argc, const char** argv) {
-	findDoor(1);
+	findDoor(3);
 	return 0;
 }
